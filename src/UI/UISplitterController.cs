@@ -112,9 +112,9 @@ namespace SplitterController
                     return;
                 }
                 if (!RuntimeData.ratios.ContainsKey(planetId))
-                    RuntimeData.ratios[planetId] = new Dictionary<int, RatioData>();
+                    RuntimeData.ratios[planetId] = new Dictionary<int, RatioSetting>();
                 if (!RuntimeData.ratios[planetId].ContainsKey(splitterId))
-                    RuntimeData.ratios[planetId][splitterId] = new RatioData();
+                    RuntimeData.ratios[planetId][splitterId] = new RatioSetting();
                 if (index == 0)
                 {
                     int target = 0;
@@ -198,10 +198,11 @@ namespace SplitterController
         [HarmonyPostfix]
         [HarmonyPatch(typeof(UISplitterWindow), "_OnOpen")]
         [HarmonyPatch(typeof(UISplitterWindow), "OnCircleClick")]
+        [HarmonyPatch(typeof(UISplitterWindow), "OnSplitterIdChange")]
         public static void RefreshInputFields()
         {
             UISplitterWindow splitterWindow = UIRoot.instance?.uiGame?.splitterWindow;
-            if (splitterWindow != null)
+            if (splitterWindow != null && splitterWindow.factory != null)
             {
                 int planetId = splitterWindow.factory.planetId;
                 int splitterId = splitterWindow.splitterId; // 是factory.entityPool[?].splitterId

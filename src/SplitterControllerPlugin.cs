@@ -20,6 +20,7 @@ namespace SplitterController
         public const string GUID = "com.GniMaerd.SplitterController";
         public const string VERSION = "0.1.0";
         public const int VERSIONINT = 100;
+        public static int versionWhenLoading = VERSIONINT;
 
         public void Awake()
         {
@@ -29,18 +30,20 @@ namespace SplitterController
 
         public void Export(BinaryWriter w)
         {
-
+            w.Write(VERSIONINT);
             RuntimeData.Export(w);
         }
 
         public void Import(BinaryReader r)
         {
+            versionWhenLoading = r.ReadInt32();
             UISplitterController.Init();
             RuntimeData.Import(r);
         }
 
         public void IntoOtherSave()
         {
+            versionWhenLoading = VERSIONINT;
             UISplitterController.Init();
             RuntimeData.InitWhenLoad();
         }

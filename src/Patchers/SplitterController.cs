@@ -53,43 +53,65 @@ namespace SplitterController
             if (sp.input0 == 0 || sp.input1 == 0 || sp.output0 == 0)
                 return true;
 
-            if(RuntimeData.ratios.ContainsKey(planetId) && RuntimeData.ratios[planetId].ContainsKey(splitterId))
+            if (RuntimeData.ratios.ContainsKey(planetId) && RuntimeData.ratios[planetId].ContainsKey(splitterId))
             {
-                RatioData ratio = RuntimeData.ratios[planetId][splitterId];
+                RatioSetting ratio = RuntimeData.ratios[planetId][splitterId];
                 if (ratio.main <= 0 && ratio.side <= 0) // 全0则无效
                 {
-                    Dictionary<int, RatioData> obj = RuntimeData.ratios[planetId];
+                    Dictionary<int, RatioSetting> obj = RuntimeData.ratios[planetId];
                     lock (obj)
                     {
                         RuntimeData.ratios[planetId].Remove(splitterId);
                     }
                     return true;
                 }
-                RatioData cur = null;
+                CargoPassingData cur = null;
                 ratio = RuntimeData.ratios[planetId][splitterId];
-                if (!RuntimeData.cargosAwait.ContainsKey(planetId))
-                    RuntimeData.cargosAwait.AddOrUpdate(planetId, new ConcurrentDictionary<int, RatioData>(), (x, y) => new ConcurrentDictionary<int, RatioData>());
-                if (!RuntimeData.cargosAwait[planetId].ContainsKey(splitterId))
+                if (!RuntimeData.passingDatas.ContainsKey(planetId))
+                    RuntimeData.passingDatas.AddOrUpdate(planetId, new ConcurrentDictionary<int, CargoPassingData>(), (x, y) => new ConcurrentDictionary<int, CargoPassingData>());
+                if (!RuntimeData.passingDatas[planetId].ContainsKey(splitterId))
                 {
-                    RatioData curCount = new RatioData();
+                    CargoPassingData curCount = new CargoPassingData();
                     curCount.InitFrom(ratio);
-                    RuntimeData.cargosAwait[planetId].AddOrUpdate(splitterId, curCount, (x, y) => curCount);
+                    RuntimeData.passingDatas[planetId].AddOrUpdate(splitterId, curCount, (x, y) => curCount);
                 }
-                cur = RuntimeData.cargosAwait[planetId][splitterId];
+                cur = RuntimeData.passingDatas[planetId][splitterId];
                 CargoPath fromPath = null;
                 CargoPath overflowPath = null;
                 int fromCargoIdx = -1;
                 int overflowCargoIdx = -1;
                 bool isFromMain = true;
-                TakeLogic:
-                if(cur.side > 0) // 尚有按比例的旁路物品待插入
+                bool mainPathCargoIsSideCargo = false;
+                // 用于记录上次的侧边输入的cargoItemId，是用来判断主路通过“非旁路”的货物数量的
+                if (cur.lastSideItem <= 0) 
                 {
-                    if(cur.main > 0) // 还有主路物品按比例未通过
-                    {
-                        // 从主路取物品
-                        fromPath = __instance.GetCargoPath(__instance.beltPool[sp.input0].segPathId);
-                        fromCargoIdx = fromPath.GetCargoIdAtRear();
+                    CargoPath sidePath = null;
+                    int sideCargoIdx = -1;
+                    sidePath = __instance.GetCargoPath(__instance.beltPool[sp.input1].segPathId);
+                    sideCargoIdx = sidePath.GetCargoIdAtRear();
+                    if (sideCargoIdx != -1)
+                        cur.lastSideItem = __instance.container.cargoPool[sideCargoIdx].item;
+                }
 
+                // 过度记录时，进行重置
+                if(cur.main < -4)
+                    cur.main = -4;
+                if(cur.side < -4)
+                    cur.side = -4;
+
+            // 主要逻辑
+            TakeLogic:
+                // 尝试从主路取物品，看看物品是不是和side的输入一样
+                fromPath = __instance.GetCargoPath(__instance.beltPool[sp.input0].segPathId);
+                fromCargoIdx = fromPath.GetCargoIdAtRear();
+                int mainPathItemId = -1;
+                if (fromCargoIdx != -1)
+                    mainPathItemId = __instance.container.cargoPool[fromCargoIdx].item;
+                mainPathCargoIsSideCargo = mainPathItemId == cur.lastSideItem;
+                if (cur.side > 0) // 尚有按比例的旁路物品待插入
+                {
+                    if (cur.main > 0 || mainPathCargoIsSideCargo) // 还有主路物品按比例未通过，或者主路上即将通过的物品与支路的物品相同（此时无视主路通过数，优先通过，且不计数主路，是否计数支路看情况）。
+                    {
                         if (fromCargoIdx == -1) // 主路为空位，则将旁路物品插入
                         {
                             isFromMain = false;
@@ -97,19 +119,24 @@ namespace SplitterController
                             fromCargoIdx = fromPath.GetCargoIdAtRear();
                         }
                     }
-                    else // 主路物品通过数全部用尽，则只会取旁路物品
+                    else // 主路物品通过数全部用尽，则查看旁路物品，有则优先旁路物品，且允许旁路物品挤掉主路物品
                     {
-                        isFromMain = false;
-                        fromPath = __instance.GetCargoPath(__instance.beltPool[sp.input1].segPathId);
-                        fromCargoIdx = fromPath.GetCargoIdAtRear();
-                        // 并且，如果主路还有物品，也要取，然后准备输出到溢出口
-                        overflowPath = __instance.GetCargoPath(__instance.beltPool[sp.input0].segPathId);
-                        overflowCargoIdx = overflowPath.GetCargoIdAtRear();
+                        CargoPath tempSidePath = __instance.GetCargoPath(__instance.beltPool[sp.input1].segPathId);
+                        int tempSideCargoIdx = tempSidePath.GetCargoIdAtRear();
+                        if (tempSideCargoIdx != -1) // 如果支路物品确实有，那么用支路。否则面临：支路需要加入但是缺货的情况，这种情况下主路无视比例要求，强行通过，输出到主输出
+                        {
+                            isFromMain = false;
+                            fromPath = __instance.GetCargoPath(__instance.beltPool[sp.input1].segPathId);
+                            fromCargoIdx = fromPath.GetCargoIdAtRear();
+                            // 并且，如果主路还有物品，也要取，然后准备输出到溢出口
+                            overflowPath = __instance.GetCargoPath(__instance.beltPool[sp.input0].segPathId);
+                            overflowCargoIdx = overflowPath.GetCargoIdAtRear();
+                        }
                     }
                 }
                 else // 旁路货物通过数用尽
                 {
-                    if(cur.main > 0) // 如果主路尚有未用尽的通过数
+                    if (cur.main > 0) // 如果主路尚有未用尽的通过数
                     {
                         // 从主路取物品
                         fromPath = __instance.GetCargoPath(__instance.beltPool[sp.input0].segPathId);
@@ -117,7 +144,7 @@ namespace SplitterController
                     }
                     else // 所有路的通过数都用尽，进行重置
                     {
-                        if(cur.AddUntilPositive(ratio))
+                        if (cur.AddUntilPositive(ratio))
                             goto TakeLogic;
                         else
                             return false;
@@ -126,17 +153,19 @@ namespace SplitterController
                 if (fromCargoIdx != -1) // 如果取到了货物
                 {
                     int stack = __instance.container.cargoPool[fromCargoIdx].stack;
+                    if (!isFromMain) // 如果从旁路取到了物品，更新旁路物品Id
+                        cur.lastSideItem = __instance.container.cargoPool[fromCargoIdx].item;
                     CargoPath toPath = __instance.GetCargoPath(__instance.beltPool[sp.output0].segPathId);
                     int headIndex = toPath.TestBlankAtHead();
-                    if(toPath != null && toPath.pathLength > 10 && headIndex >= 0)
+                    if (toPath != null && toPath.pathLength > 10 && headIndex >= 0)
                     {
                         int cargoId = fromPath.TryPickCargoAtEnd();
-                        if(cargoId >= 0)
+                        if (cargoId >= 0)
                         {
                             toPath.InsertCargoAtHeadDirect(cargoId, headIndex);
-                            if (isFromMain)
+                            if (isFromMain && !mainPathCargoIsSideCargo)
                                 cur.main -= stack;
-                            else
+                            else if (!isFromMain || (isFromMain && mainPathCargoIsSideCargo))
                                 cur.side -= stack;
                         }
                         else
