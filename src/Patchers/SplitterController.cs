@@ -231,7 +231,7 @@ namespace SplitterController
 
         /// <summary>
         /// 判断本身是否支持按设定的比例执行逻辑
-        /// 如果有filter，或者上边有箱子，只能执行原逻辑。或者有输入的priority，也只能执行原逻辑
+        /// 如果有filter，或者上边有箱子，只能执行原逻辑。
         /// </summary>
         /// <param name="sp"></param>
         /// <returns></returns>
